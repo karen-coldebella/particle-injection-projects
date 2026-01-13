@@ -1,0 +1,9 @@
+{
+    "python.defaultInterpreterPath": "C:/Users/karen/anaconda3/envs/particle_injection_projects/Scripts/python.exe",
+    "python.terminal.activateEnvironment": true,
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "python-envs.pythonProjects": []
+}
+
+
