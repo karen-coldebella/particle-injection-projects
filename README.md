@@ -28,4 +28,9 @@ Data files are not versioned in this repository.
 │   ├── FGM/
 │   └── SST/
 ├── Figures/
+├── scripts/
+│   ├── themis/
+│   │   └── injection_themis.py
+│   └── vanallen/
+│       └── injection_vanallen.py
 └── README.md
