@@ -103,7 +103,7 @@ delta_time = cdf_SST_thd.varget('thd_psif_delta_time')
 # Unit: eV / (cm^2 · s · sr · eV)
 # Logarithmic scale
 # Main variable for identifying energetic particle injections
-spec_ion_flux = cdf_SST_thd.varget('thd_psif_en_eflux')
+ion_flux = cdf_SST_thd.varget('thd_psif_en_eflux')
 
 # Central energy of each spectrogram channel
 # Unit: eV
@@ -116,12 +116,12 @@ energy = cdf_SST_thd.varget('thd_psif_en_eflux_yaxis')
 # Unit: # / (cm^2 · s)
 # Linear scale
 # Suitable for time series analysis and comparison with FGM measurements
-series_ion_flux = cdf_SST_thd.varget('thd_psif_flux')
+vector_ion_flux = cdf_SST_thd.varget('thd_psif_flux')
 
 # Labels of the ion flux vector components
 # Define the physical meaning of each column of thd_psif_flux
 # e.g., instrumental directions or DSL components
-flux_labls = cdf_SST_thd.varget('thd_psif_flux_labl')
+vector_flux_labls = cdf_SST_thd.varget('thd_psif_flux_labl')
 
 
 # -------------------- INSPECTION --------------------
@@ -132,10 +132,10 @@ print("Informações da variável 'thd_psif_time':", var_info)
 variables = {
     'epoch0': epoch0,
     'delta_time': delta_time,
-    'spec_ion_flux': spec_ion_flux,
+    'ion_flux': ion_flux,
     'energy': energy,
-    'series_ion_flux': series_ion_flux,
-    'flux_labls': flux_labls,
+    'vector_ion_flux': vector_ion_flux,
+    'vector_flux_labls': vector_flux_labls,
 }
 
 for name, var in variables.items():
@@ -170,25 +170,36 @@ print()
 #%% -------------------- DATA FRAME time series --------------------
 
 df_thed_SST_series = pd.DataFrame(
-    series_ion_flux,
+    vector_ion_flux,
     index=pd.DatetimeIndex(time_sst),
-    columns=flux_labls
+    columns=vector_flux_labls
 )
 
 df_thed_SST_series.index.name = 'time'
 
 
-# time_sst já é o eixo temporal
+# time_sst é o eixo temporal
 # energy_bins = energia central de cada canal
-energy_bins = np.ravel(energy)
+# canais de energia (fixos no tempo)
+energy_bins = energy[0, :]  # (16,)
 
 df_spec_series = pd.DataFrame(
-    spec_ion_flux, 
-    index=time_sst, 
-    columns=energy_bins  # 16 canais de energia
+    ion_flux,
+    index=pd.DatetimeIndex(time_sst),
+    columns=energy_bins
 )
 
 df_spec_series.index.name = 'time'
+
+energy_bins = energy[0, :]  # (16,)
+
+print("SST energy channels (index : energy [keV])")
+for i, e in enumerate(energy_bins):
+    if np.isfinite(e):
+        print(f"Channel {i:02d}: {e/1e3:.2f} keV")
+    else:
+        print(f"Channel {i:02d}: NaN (undefined)")
+
 
 
 # -------------------- ENERGY SPEC --------------------
@@ -197,7 +208,7 @@ df_spec_series.index.name = 'time'
 #Z = spec_ion_flux.T             # (16, N)
 
 # Cria DataFrame temporário com tempo como índice
-df_spec = pd.DataFrame(spec_ion_flux, index=time_sst, columns=energy_bins)
+df_spec = pd.DataFrame(ion_flux, index=time_sst, columns=energy_bins)
 
 # Interpolação linear ao longo do tempo
 df_spec_interp = df_spec.interpolate(method='time')
@@ -276,7 +287,7 @@ axs[1].text(0.02, 0.85, '(b)', transform=axs[1].transAxes,
             fontsize=13, fontweight='bold')
 axs[1].set_xlim(np.min(df_plot.index), np.max(df_plot.index))
 
-
+"""
 # -------------------- (c) Ion energy spectrogram --------------------
 im = axs[2].pcolormesh(
     time_plot,                 
@@ -289,18 +300,56 @@ im = axs[2].pcolormesh(
         vmax=np.nanmax(Z_plot)
     )
 )
-axs[2].set_ylabel('Energy (keV)', fontsize=13)
+
+axs[2].set_ylabel('Ion energy (keV)', fontsize=13)
 axs[2].set_yscale('log')
 axs[2].tick_params(axis='both', labelsize=11)
 axs[2].text(0.02, 0.85, '(c)', transform=axs[2].transAxes,
             fontsize=13, fontweight='bold')
-fig.colorbar(im, ax=axs[2], label='Flux (eV/cm²·s·sr·eV)')
+fig.colorbar(im, ax=axs[2], label='(eV/cm²·s·sr·eV)')
+"""
+# -------------------- (c) Ion energy spectrogram --------------------
+im = axs[2].pcolormesh(
+    time_plot,
+    energy_plot / 1e3,
+    Z_plot,
+    shading='auto',
+    cmap='plasma',
+    norm=plt.matplotlib.colors.LogNorm(
+        vmin=np.nanmin(Z_plot[Z_plot > 0]),
+        vmax=np.nanmax(Z_plot)
+    )
+)
+
+axs[2].set_ylabel('Ion energy (keV)', fontsize=13)
+axs[2].set_yscale('log')
+axs[2].tick_params(axis='both', labelsize=11)
+axs[2].text(
+    0.02, 0.85, '(c)',
+    transform=axs[2].transAxes,
+    fontsize=13,
+    fontweight='bold'
+)
+
+# Colorbar alinhado ao painel (c) 
+left, bottom, width, height = axs[2].get_position().bounds
+
+cax = fig.add_axes([
+    left + width + 0.01,  # deslocamento horizontal
+    bottom,               # mesma base
+    0.02,                 # largura do colorbar
+    height                # mesma altura do painel
+])
+
+cbar = fig.colorbar(im, cax=cax)
+cbar.set_label(r'(eV cm$^{-2}$ s$^{-1}$ sr$^{-1}$ eV$^{-1}$)', fontsize=12)
+cbar.ax.tick_params(labelsize=11)
 
 
 # -------------------- (d) Ion flux series (integrated) --------------------
-for i, label in enumerate(flux_labls):
-    axs[3].plot(time_sst, series_ion_flux[:, i], label=label)
-axs[3].set_ylabel('Ion flux (#/cm²·s)', fontsize=13)
+for i, label in enumerate(vector_flux_labls):
+    axs[3].plot(time_sst, vector_ion_flux[:, i], label=label)
+axs[3].set_ylabel('Ion flux vector (#/cm²·s)', fontsize=13)
 axs[3].grid(True)
 axs[3].legend(
     fontsize=11,
@@ -314,12 +363,12 @@ axs[3].text(0.02, 0.85, '(d)', transform=axs[3].transAxes,
 
 
 # -------------------- (e) Ion differential energy flux (séries) --------------------
-channels_to_plot = [0, 4, 8, 12, 15]  # índices dos canais
-colors = ['blue', 'green', 'orange', 'red', 'purple']
+channels_to_plot = [0, 1, 2, 3, 4, 5]  # índices dos canais
+colors = ['blue', 'green', 'orange', 'red', 'purple', 'brown']
 
 for ch, c in zip(channels_to_plot, colors):
     axs[4].plot(df_spec_series.index, df_spec_series.iloc[:, ch], 
-                label=f'{energy_bins[0][ch]/1e3:.1f} keV', color=c)
+                label=f'{energy_bins[ch]/1e3:.1f} keV')
 
 axs[4].set_yscale('log')
 axs[4].set_ylabel('Ion flux (eV/cm²·s·sr·eV)', fontsize=13)
