@@ -1,59 +1,8 @@
 # ======================================================================
-"""
-SCRIPT NAME:
-themis_particle_injection_analysis.py
-
-DESCRIPTION:
-This script reads and processes THEMIS-D Level-2 FGM and SST data
-to investigate particle injection events in the Earth's magnetosphere.
-The analysis focuses on identifying injections through:
-  (i) magnetic field signatures (dipolarization) measured by FGM, and
- (ii) ion flux enhancements observed by the SST instrument.
-
-DATASETS:
-- THEMIS-D FGM (L2):
-  ---- FGS spin-resolution (~3 s) magnetic field data
-       * Total magnetic field magnitude |B|
-         [thd_fgs_btotal]
-
-       * Magnetic field components in GSE coordinates (Bx, By, Bz)
-         [thd_fgs_gse]
-
-- THEMIS-D SST (PSIF product, L2):
-  ---- Full mode
-       * Fixed energy channels (16 bins, eV)
-
-       * Ion differential energy flux (energy spectrogram)
-         [thd_psif_en_eflux], [thd_psif_en_eflux_yaxis]
-
-       * Integrated ion flux vector
-         [thd_psif_flux], [thd_psif_flux_labl]
-
-METHODOLOGY:
-1. Read CDF files using the cdflib library.
-2. Convert all time variables from Unix epoch to UTC datetime.
-3. Construct time series for magnetic field and ion flux quantities.
-4. Build an ion energy spectrogram (time × energy).
-5. Apply a controlled 2D linear interpolation in time–energy space,
-   exclusively for visualization purposes, to reduce small gaps
-   caused by low particle counts.
-6. Mask non-physical values (NaN and flux ≤ 0) to ensure compatibility
-   with logarithmic color scaling.
-
-PLOTS:
-The final figure consists of five panels:
-  (a) Total magnetic field magnitude |B|
-  (b) Magnetic field components in GSE coordinates
-  (c) Ion energy spectrogram (log-scaled; interpolated for visualization)
-  (d) Integrated ion flux vector components
-  (e) Selected ion energy channels shown as time series
-
-AUTHOR:
-Karen Ferreira
-======================================================================
-"""
-
-
+# PURPOSE:
+# Read and process THEMIS FGM data (CDF) to identify particle injections
+# using magnetic field signatures (dipolarization).
+# ======================================================================
 
 # %% ---------------------------- IMPORTS ----------------------------
 import datetime
@@ -106,7 +55,7 @@ print("Variables in CDF:", cdf_SST_thd.cdf_info().zVariables)
 
 # %% ---------------------------- 4. READ VARIABLES FGM ------------------
 #FGM instrument
-epoch_raw_FGM = cdf_FGM_thd.varget('thd_fgs_time')  # in seconds since 1970
+epoch_raw_FGM = cdf_FGM_thd.varget('thd_fgs_time')  # em segundos desde 1970
 Btotal    = cdf_FGM_thd.varget('thd_fgs_btotal')
 Bgse      = cdf_FGM_thd.varget('thd_fgs_gse')
 
@@ -208,8 +157,7 @@ for name, var in variables.items():
 
 
 # -------------------- CONVERT EPOCH TO DATETIME --------------------
-# complete SST time axis
-# epoch0 + delta_time
+# eixo temporal completo do SST
 epoch0_dt = pd.to_datetime(epoch0, unit='s')
 delta_td = pd.to_timedelta(delta_time, unit='s')
 
@@ -233,9 +181,9 @@ df_thed_SST_series = pd.DataFrame(
 df_thed_SST_series.index.name = 'time'
 
 
-# time_sst is the time axis
-# energy_bins = central energy from each channel
-# energy channel fixed in time
+# time_sst é o eixo temporal
+# energy_bins = energia central de cada canal
+# canais de energia (fixos no tempo)
 energy_bins = energy[0, :]  # (16,)
 
 df_spec_series = pd.DataFrame(
@@ -259,45 +207,34 @@ for i, e in enumerate(energy_bins):
 
 #%%# -------------------- ENERGY SPEC --------------------
 
-# Prepare the axis
-# time in float (seconds since epoch) for the griddata
-time_float = time_plot.astype('datetime64[s]').astype(float)
+df_spec = pd.DataFrame(ion_flux, index=time_sst, columns=energy_bins)
+df_spec_interp = df_spec.interpolate(method='time')
 
-energy_plot = np.array(energy_plot, dtype=float)
+Z_plot = df_spec_interp.T.values
+Z_plot = np.ma.masked_invalid(Z_plot)
+Z_plot = np.ma.masked_less_equal(Z_plot, 0)
 
-# Grid
-T, E = np.meshgrid(time_float, energy_plot)
+time_plot = df_spec_interp.index.to_numpy()
 
-Z = Z_plot.filled(np.nan)
+energy_plot = np.array(energy_bins, dtype=float)
+valid_energy = np.isfinite(energy_plot) & (energy_plot > 0)
 
-# Valid points
-mask = np.isfinite(Z)
+energy_plot = energy_plot[valid_energy]
+Z_plot = Z_plot[valid_energy, :]
 
-points = np.column_stack((T[mask], E[mask]))
-values = Z[mask]
+Z_pos = Z_plot.compressed()
 
-# New grade (same resolution)
-Ti, Ei = np.meshgrid(time_float, energy_plot)
+if Z_pos.size == 0:
+    raise ValueError("Z_plot não contém valores positivos.")
 
-# 2D interpolation 
-Z_interp = griddata(
-    points,
-    values,
-    (Ti, Ei),
-    method='linear'
-)
-
-# Mask invalid values
-Z_interp = np.ma.masked_invalid(Z_interp)
-Z_interp = np.ma.masked_less_equal(Z_interp, 0)
-
-# Recalculate LogNorm limits
-Z_pos = Z_interp.compressed()
 vmin = np.percentile(Z_pos, 1)
 vmax = np.percentile(Z_pos, 99)
 
-if Z_pos.size == 0:
-    raise ValueError("Z_plot do not contain positive values.")
+# checar
+print(np.all(np.diff(time_plot.astype('datetime64[ns]').astype(float)) > 0))
+print("NaN em time_plot:", np.any(~np.isfinite(time_plot)))
+print("NaN em energy_plot:", np.any(~np.isfinite(energy_plot)))
+print("Shapes:", Z_plot.shape, time_plot.shape, energy_plot.shape)
 
 
 # %% ---------------------------- 6. FILTER TIME INTERVAL -----------
@@ -332,20 +269,20 @@ gs = GridSpec(
     nrows=5,
     ncols=2,
     figure=fig,
-    width_ratios=[20, 1],      # colorbar column
+    width_ratios=[20, 1],      # coluna do colorbar
     height_ratios=[1, 1, 1, 1, 1],
     hspace=0.15,
     wspace=0.05
 )
 
-# Axis definitions
+# Eixos principais
 ax_a = fig.add_subplot(gs[0, 0])
 ax_b = fig.add_subplot(gs[1, 0], sharex=ax_a)
 ax_c = fig.add_subplot(gs[2, 0], sharex=ax_a)
 ax_d = fig.add_subplot(gs[3, 0], sharex=ax_a)
 ax_e = fig.add_subplot(gs[4, 0], sharex=ax_a)
 
-# Axis dedicated to panel c) colorbar
+# Eixo dedicado ao colorbar do painel (c)
 cax = fig.add_subplot(gs[2, 1])
 
 
@@ -383,26 +320,26 @@ nan_fraction_time = np.mean(np.all(~np.isfinite(Z_plot), axis=0))
 im = ax_c.pcolormesh(
     time_plot,
     energy_plot,
-    Z_interp,
+    Z_plot,
     shading='nearest',
     cmap='plasma',
     norm=LogNorm(vmin=vmin, vmax=vmax)
 )
 
+
 ax_c.set_yscale('log')
-ax_c.set_ylabel('Ion energy (keV)')
-ax_c.set_xlabel('Time (UT)')
+ax_c.set_ylabel('Ion energy (keV)', fontsize=12)
+ax_c.tick_params(axis='both', labelsize=12)
+ax_c.text(0.02, 0.85, '(c)', transform=ax_c.transAxes,
+          fontsize=12, fontweight='bold')
 
-
-# Colorbar
+# Colorbar do painel (c)
 cbar = fig.colorbar(im, cax=cax)
 cbar.set_label(
     r'(eV cm$^{-2}$ s$^{-1}$ sr$^{-1}$ eV$^{-1}$)',
     fontsize=12
 )
 cbar.ax.tick_params(labelsize=12)
-
-ax_c.tick_params(axis='both', labelsize=11)
 
 
 # -------------------- (d) Ion flux vector (integrated) --------------------
@@ -422,7 +359,7 @@ ax_d.legend(
     bbox_to_anchor=(1.02, 1),
     borderaxespad=0
 )
-ax_d.set_ylim(4e4, 4e6)   # adjust according to data
+ax_d.set_ylim(4e4, 4e6)   # exemplo
 
 ax_d.tick_params(axis='both', labelsize=12)
 ax_d.text(0.02, 0.85, '(d)', transform=ax_d.transAxes,
@@ -458,7 +395,7 @@ ax_e.text(0.02, 0.85, '(e)', transform=ax_e.transAxes,
           fontsize=12, fontweight='bold')
 
 
-# -------------------- final adjustments --------------------
+# -------------------- Ajustes finais --------------------
 x_label_pos = -0.05
 
 for ax in [ax_a, ax_b, ax_c, ax_d, ax_e]:
@@ -474,52 +411,126 @@ plt.show()
 
 
 
+# %% SPEC GRID TEST
+from scipy.interpolate import griddata
+from matplotlib.colors import LogNorm
+import numpy as np
+import matplotlib.pyplot as plt
 
-# %% -------------------- SPECTOGRAM PLOT WITH PCOLOR MESH ---------
-#I decided to not use this one in the main plot because
-# when the count is too low we have many gaps in the plot
+# --- 1. Converter tempo para float (dias desde 1970, sem timezone) ---
+t0 = np.datetime64('1970-01-01T00:00:00')
+time_float = (np.array(time_sst) - t0) / np.timedelta64(1, 'D')
 
-df_spec = pd.DataFrame(ion_flux, index=time_sst, columns=energy_bins)
-df_spec_interp = df_spec.interpolate(method='time')
+# --- 2. Selecionar canais de energia válidos ---
+energy_valid = energy_bins[np.isfinite(energy_bins)]
 
-Z_plot = df_spec_interp.T.values
-Z_plot = np.ma.masked_invalid(Z_plot)
-Z_plot = np.ma.masked_less_equal(Z_plot, 0)
+# --- 3. Selecionar valores válidos de fluxo ---
+valid = np.isfinite(ion_flux)
 
-time_plot = df_spec_interp.index.to_numpy()
+# Flatten para griddata
+time_flat = np.repeat(time_float, ion_flux.shape[1])[valid.flatten()]
+energy_flat = np.tile(energy_bins, ion_flux.shape[0])[valid.flatten()]
+flux_flat = ion_flux.flatten()[valid.flatten()]
 
-energy_plot = np.array(energy_bins, dtype=float)
-valid_energy = np.isfinite(energy_plot) & (energy_plot > 0)
+# --- 4. Grid alvo ---
+# Tempo regular (0.01 h)
+dt_hours = 0.01
+dt_days = dt_hours / 24
+time_grid = np.arange(time_float.min(), time_float.max(), dt_days)
 
-energy_plot = energy_plot[valid_energy]
-Z_plot = Z_plot[valid_energy, :]
+# Energia regular (log-spaced, fisicamente mais adequado)
+energy_grid = np.logspace(
+    np.log10(energy_valid.min()),
+    np.log10(energy_valid.max()),
+    64
+)
 
-Z_pos = Z_plot.compressed()
+# Meshgrid 2D
+T_grid, E_grid = np.meshgrid(time_grid, energy_grid)
 
-if Z_pos.size == 0:
-    raise ValueError("Z_plot não contém valores positivos.")
+# --- 5. Interpolação linear ---
+flux_grid = griddata(
+    points=np.column_stack([time_flat, energy_flat]),
+    values=flux_flat,
+    xi=(T_grid, E_grid),
+    method='linear',
+    fill_value=np.nan
+)
 
+# --- 6. Plot ---
+fig, ax = plt.subplots(figsize=(12, 4))
+
+im = ax.pcolormesh(
+    T_grid,
+    E_grid / 1e3,   # energia em keV
+    flux_grid,
+    shading='nearest',
+    cmap='plasma',
+    norm=LogNorm()
+)
+
+ax.set_yscale('log')
+ax.set_ylabel('Ion energy (keV)')
+ax.set_xlabel('Time (days since 1970)')
+
+cbar = fig.colorbar(im, ax=ax)
+cbar.set_label('Ion flux (eV cm$^{-2}$ s$^{-1}$ sr$^{-1}$ eV$^{-1}$)')
+
+plt.tight_layout()
+plt.show()
+
+# %%
+
+
+#%%
+# %% -------------------- PANEL (c): 2D INTERPOLATION (time × energy) --------------------
+
+# ---------- 1. Preparar eixos ----------
+# tempo em float (segundos desde epoch) para o griddata
+time_float = time_plot.astype('datetime64[s]').astype(float)
+
+energy_plot = np.array(energy_plot, dtype=float)
+
+# ---------- 2. Grade original ----------
+T, E = np.meshgrid(time_float, energy_plot)
+
+Z = Z_plot.filled(np.nan)
+
+# ---------- 3. Pontos válidos ----------
+mask = np.isfinite(Z)
+
+points = np.column_stack((T[mask], E[mask]))
+values = Z[mask]
+
+# ---------- 4. Nova grade (mesma resolução) ----------
+Ti, Ei = np.meshgrid(time_float, energy_plot)
+
+# ---------- 5. Interpolação 2D controlada ----------
+Z_interp = griddata(
+    points,
+    values,
+    (Ti, Ei),
+    method='linear'
+)
+
+# mascarar valores inválidos ou não físicos
+Z_interp = np.ma.masked_invalid(Z_interp)
+Z_interp = np.ma.masked_less_equal(Z_interp, 0)
+
+# ---------- 6. Recalcular limites do LogNorm ----------
+Z_pos = Z_interp.compressed()
 vmin = np.percentile(Z_pos, 1)
 vmax = np.percentile(Z_pos, 99)
 
-# checar
-print(np.all(np.diff(time_plot.astype('datetime64[ns]').astype(float)) > 0))
-print("NaN em time_plot:", np.any(~np.isfinite(time_plot)))
-print("NaN em energy_plot:", np.any(~np.isfinite(energy_plot)))
-print("Shapes:", Z_plot.shape, time_plot.shape, energy_plot.shape)
-
-
-# ---------- Plot ----------
+# ---------- 7. Plot ----------
+# ---------- 7. Plot (figura separada) ----------
 fig, ax = plt.subplots(figsize=(12, 4))
-
-nan_fraction_time = np.mean(np.all(~np.isfinite(Z_plot), axis=0))
-
 
 im = ax.pcolormesh(
     time_plot,
     energy_plot,
-    Z_plot,
-    shading='nearest',
+    Z_interp,
+    shading='auto',
     cmap='plasma',
     norm=LogNorm(vmin=vmin, vmax=vmax)
 )
@@ -527,13 +538,13 @@ im = ax.pcolormesh(
 ax.set_yscale('log')
 ax.set_ylabel('Ion energy (keV)')
 ax.set_xlabel('Time (UT)')
-ax.tick_params(axis='both', labelsize=11)
 
 cbar = fig.colorbar(im, ax=ax)
 cbar.set_label(
     r'Ion flux (eV cm$^{-2}$ s$^{-1}$ sr$^{-1}$ eV$^{-1}$)'
 )
-cbar.ax.tick_params(labelsize=11)
+
+ax.tick_params(axis='both', labelsize=11)
 
 plt.tight_layout()
 plt.show()
