@@ -469,6 +469,7 @@ for ax in [ax_a, ax_b, ax_c, ax_d]:
     plt.setp(ax.get_xticklabels(), visible=False)
 
 fig.autofmt_xdate()
+plt.savefig("C:\\Users\\karen\\Programas\\particle_injection_projects\\Figures\\thD_march23.png", dpi=300, bbox_inches="tight")
 plt.show()
 
 
